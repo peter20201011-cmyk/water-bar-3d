@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>水吧台 3D 渲染 — 全视角全细节</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #1a1a1a; font-family: -apple-system, sans-serif; }
+  #info {
+    position: absolute; top: 12px; left: 12px; z-index: 10;
+    color: #eaeaea; background: rgba(0,0,0,0.55); padding: 10px 14px;
+    border-radius: 8px; font-size: 13px; line-height: 1.6; max-width: 320px;
+  }
+  #info b { color: #ffd28a; }
+  #controls {
+    position: absolute; bottom: 12px; left: 12px; z-index: 10;
+    color: #eaeaea; background: rgba(0,0,0,0.55); padding: 8px 12px;
+    border-radius: 8px; font-size: 12px;
+  }
+  button {
+    background: #ffd28a; color: #222; border: none; padding: 4px 10px;
+    border-radius: 4px; cursor: pointer; margin-right: 6px; font-size: 12px;
+  }
+  button:hover { background: #ffbb55; }
+</style>
+</head>
+<body>
+<div id="info">
+  <b>水吧台 3D 模型</b><br>
+  现代家用风格 · 1.8m 直线吧台<br>
+  <span style="opacity:.8">大理石台面 + 胡桃木柜体 + 嵌入式水槽 + 杯架陈列</span>
+</div>
+<div id="controls">
+  <button onclick="toggleAutoRotate()">自动旋转</button>
+  <button onclick="resetView()">重置视角</button>
+  <button onclick="toggleNight()">日/夜模式</button>
+  鼠标左键旋转 · 滚轮缩放 · 右键平移
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+// ============ 场景基础 ============
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xeae3d6);
+scene.fog = new THREE.Fog(0xeae3d6, 12, 30);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 100);
+camera.position.set(3.2, 2.0, 3.8);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.8, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 1.5;
+controls.maxDistance = 12;
+controls.maxPolarAngle = Math.PI * 0.49;
+
+// ============ 灯光 ============
+const ambient = new THREE.AmbientLight(0xffffff, 0.35);
+scene.add(ambient);
+
+const hemi = new THREE.HemisphereLight(0xfff2dc, 0x554433, 0.6);
+hemi.position.set(0, 5, 0);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0xfff0d0, 1.4);
+sun.position.set(4, 6, 3);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -5; sun.shadow.camera.right = 5;
+sun.shadow.camera.top = 5; sun.shadow.camera.bottom = -5;
+sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 20;
+sun.shadow.bias = -0.0005;
+scene.add(sun);
+
+// 三盏吧台筒灯（暖色点光源）
+const downlights = [];
+for (let i = -1; i <= 1; i++) {
+  const pl = new THREE.PointLight(0xffb060, 0.6, 4, 2);
+  pl.position.set(i * 0.6, 2.4, 0);
+  pl.castShadow = false;
+  scene.add(pl);
+  downlights.push(pl);
+}
+
+// ============ 材质工具 ============
+function makeMarbleTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 512;
+  const ctx = c.getContext('2d');
+  const grd = ctx.createLinearGradient(0,0,512,512);
+  grd.addColorStop(0, '#f5f1ea'); grd.addColorStop(1, '#e8e2d6');
+  ctx.fillStyle = grd; ctx.fillRect(0,0,512,512);
+  ctx.strokeStyle = 'rgba(120,110,100,0.35)';
+  ctx.lineWidth = 0.6;
+  for (let i = 0; i < 35; i++) {
+    ctx.beginPath();
+    let x = Math.random()*512, y = Math.random()*512;
+    ctx.moveTo(x,y);
+    for (let j = 0; j < 8; j++) {
+      x += (Math.random()-0.5)*120;
+      y += (Math.random()-0.5)*120;
+      ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(80,70,60,0.18)';
+  ctx.lineWidth = 1.4;
+  for (let i = 0; i < 8; i++) {
+    ctx.beginPath();
+    let x = Math.random()*512, y = Math.random()*512;
+    ctx.moveTo(x,y);
+    for (let j = 0; j < 6; j++) {
+      x += (Math.random()-0.5)*200;
+      y += (Math.random()-0.5)*200;
+      ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+function makeWoodTexture(baseColor = '#5a3a23', dark = '#3d2515') {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 512;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = baseColor; ctx.fillRect(0,0,512,512);
+  for (let i = 0; i < 60; i++) {
+    ctx.strokeStyle = `rgba(${20+Math.random()*30},${15+Math.random()*15},${10+Math.random()*10},${0.15+Math.random()*0.25})`;
+    ctx.lineWidth = 0.8 + Math.random()*1.4;
+    ctx.beginPath();
+    const y = Math.random()*512;
+    ctx.moveTo(0, y);
+    for (let x = 0; x < 512; x += 10) {
+      ctx.lineTo(x, y + Math.sin(x*0.04)*3 + (Math.random()-0.5)*2);
+    }
+    ctx.stroke();
+  }
+  // 几个结
+  for (let i = 0; i < 5; i++) {
+    const cx = Math.random()*512, cy = Math.random()*512;
+    const grd = ctx.createRadialGradient(cx, cy, 1, cx, cy, 18);
+    grd.addColorStop(0, dark); grd.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grd; ctx.fillRect(cx-20, cy-20, 40, 40);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+function makeFloorTexture() {
+  const c = document.createElement('canvas');
+  c.width = 1024; c.height = 1024;
+  const ctx = c.getContext('2d');
+  const plankW = 1024/6;
+  for (let i = 0; i < 6; i++) {
+    const base = 70 + Math.random()*30;
+    ctx.fillStyle = `rgb(${base+25},${base+5},${base-15})`;
+    ctx.fillRect(i*plankW, 0, plankW, 1024);
+    for (let j = 0; j < 25; j++) {
+      ctx.strokeStyle = `rgba(40,25,15,${0.1+Math.random()*0.2})`;
+      ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      const y = Math.random()*1024;
+      ctx.moveTo(i*plankW, y);
+      ctx.lineTo((i+1)*plankW, y + (Math.random()-0.5)*30);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = '#2a1a0c'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(i*plankW, 0); ctx.lineTo(i*plankW, 1024); ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2,2);
+  return tex;
+}
+
+const marbleTex = makeMarbleTexture();
+const woodTex = makeWoodTexture();
+const floorTex = makeFloorTexture();
+const darkWoodTex = makeWoodTexture('#3a2415', '#1a0f08');
+
+// ============ 地板 ============
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(14, 10),
+  new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.7, metalness: 0.05 })
+);
+floor.rotation.x = -Math.PI/2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// ============ 背景墙 ============
+const wallMat = new THREE.MeshStandardMaterial({ color: 0xe0d5c0, roughness: 0.95 });
+const backWall = new THREE.Mesh(new THREE.PlaneGeometry(14, 5), wallMat);
+backWall.position.set(0, 2.5, -2);
+backWall.receiveShadow = true;
+scene.add(backWall);
+
+const sideWall = new THREE.Mesh(new THREE.PlaneGeometry(10, 5), wallMat);
+sideWall.position.set(-4, 2.5, 0);
+sideWall.rotation.y = Math.PI/2;
+sideWall.receiveShadow = true;
+scene.add(sideWall);
+
+// ============ 后吧台展示柜 ============
+const backCabinetGroup = new THREE.Group();
+const backCabBody = new THREE.Mesh(
+  new THREE.BoxGeometry(3.0, 2.0, 0.35),
+  new THREE.MeshStandardMaterial({ map: darkWoodTex, roughness: 0.55 })
+);
+backCabBody.position.set(0, 1.0, -1.82);
+backCabBody.castShadow = backCabBody.receiveShadow = true;
+backCabinetGroup.add(backCabBody);
+
+// 后柜内部隔板（4 层）
+const shelfMat = new THREE.MeshStandardMaterial({ map: darkWoodTex, roughness: 0.5 });
+for (let i = 0; i < 4; i++) {
+  const shelf = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.025, 0.3), shelfMat);
+  shelf.position.set(0, 0.25 + i*0.45, -1.78);
+  shelf.castShadow = shelf.receiveShadow = true;
+  backCabinetGroup.add(shelf);
+}
+// 背板内壁（深色，让酒瓶更突出）
+const backCabBackdrop = new THREE.Mesh(
+  new THREE.PlaneGeometry(2.85, 1.85),
+  new THREE.MeshStandardMaterial({ color: 0x1a0f08, roughness: 0.6 })
+);
+backCabBackdrop.position.set(0, 1.0, -1.94);
+backCabinetGroup.add(backCabBackdrop);
+scene.add(backCabinetGroup);
+
+// ============ 主吧台 ============
+const barGroup = new THREE.Group();
+
+// 柜体主箱（胡桃木）
+const cabinetMat = new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.55, metalness: 0.05 });
+const cabinet = new THREE.Mesh(
+  new THREE.BoxGeometry(1.8, 0.9, 0.6),
+  cabinetMat
+);
+cabinet.position.set(0, 0.45, 0);
+cabinet.castShadow = cabinet.receiveShadow = true;
+barGroup.add(cabinet);
+
+// 柜门 3 扇（凹下去一点显示分割）
+const doorMat = new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.5 });
+for (let i = -1; i <= 1; i++) {
+  const door = new THREE.Mesh(new RoundedBoxGeometry(0.55, 0.75, 0.02, 3, 0.015), doorMat);
+  door.position.set(i*0.59, 0.45, 0.305);
+  door.castShadow = true;
+  barGroup.add(door);
+  // 门把手（金属）
+  const knob = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.012, 0.012, 0.08, 16),
+    new THREE.MeshStandardMaterial({ color: 0xd4af6a, roughness: 0.25, metalness: 0.9 })
+  );
+  knob.rotation.z = Math.PI/2;
+  knob.position.set(i*0.59 + 0.22, 0.55, 0.325);
+  knob.castShadow = true;
+  barGroup.add(knob);
+}
+
+// 踢脚线
+const kickplate = new THREE.Mesh(
+  new THREE.BoxGeometry(1.78, 0.08, 0.55),
+  new THREE.MeshStandardMaterial({ color: 0x1a0f08, roughness: 0.7 })
+);
+kickplate.position.set(0, 0.04, 0);
+barGroup.add(kickplate);
+
+// 台面（大理石）
+const counterTopMat = new THREE.MeshStandardMaterial({
+  map: marbleTex, roughness: 0.18, metalness: 0.05,
+  envMapIntensity: 0.6
+});
+const counterTop = new THREE.Mesh(
+  new RoundedBoxGeometry(1.9, 0.05, 0.7, 3, 0.012),
+  counterTopMat
+);
+counterTop.position.set(0, 0.925, 0);
+counterTop.castShadow = counterTop.receiveShadow = true;
+barGroup.add(counterTop);
+
+// 后挡水（短墙）
+const backsplash = new THREE.Mesh(
+  new THREE.BoxGeometry(1.9, 0.12, 0.03),
+  counterTopMat
+);
+backsplash.position.set(0, 1.01, -0.33);
+barGroup.add(backsplash);
+
+// ============ 嵌入式水槽 ============
+const sinkMat = new THREE.MeshStandardMaterial({ color: 0x9aa0a8, roughness: 0.18, metalness: 0.85 });
+// 水槽边缘（凸起一点）
+const sinkRim = new THREE.Mesh(
+  new THREE.BoxGeometry(0.42, 0.012, 0.32),
+  sinkMat
+);
+sinkRim.position.set(-0.55, 0.957, 0);
+barGroup.add(sinkRim);
+// 水槽内壁（4 面 + 底）
+const sinkInnerMat = new THREE.MeshStandardMaterial({ color: 0x787e85, roughness: 0.25, metalness: 0.7 });
+const sinkBottom = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.005, 0.26), sinkInnerMat);
+sinkBottom.position.set(-0.55, 0.82, 0);
+barGroup.add(sinkBottom);
+const sinkWalls = [
+  { size: [0.36, 0.13, 0.005], pos: [-0.55, 0.885, -0.128] },
+  { size: [0.36, 0.13, 0.005], pos: [-0.55, 0.885,  0.128] },
+  { size: [0.005, 0.13, 0.26], pos: [-0.73, 0.885, 0] },
+  { size: [0.005, 0.13, 0.26], pos: [-0.37, 0.885, 0] },
+];
+sinkWalls.forEach(w => {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(...w.size), sinkInnerMat);
+  m.position.set(...w.pos);
+  barGroup.add(m);
+});
+// 水面（半透蓝）
+const water = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.34, 0.24),
+  new THREE.MeshPhysicalMaterial({
+    color: 0x88c5e8, transparent: true, opacity: 0.55,
+    roughness: 0.05, metalness: 0.0, transmission: 0.6, ior: 1.33
+  })
+);
+water.rotation.x = -Math.PI/2;
+water.position.set(-0.55, 0.86, 0);
+barGroup.add(water);
+
+// 排水口
+const drain = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.025, 0.025, 0.006, 16),
+  new THREE.MeshStandardMaterial({ color: 0x444a52, roughness: 0.3, metalness: 0.9 })
+);
+drain.position.set(-0.55, 0.823, 0);
+barGroup.add(drain);
+
+// ============ 水龙头 ============
+const faucetMat = new THREE.MeshStandardMaterial({ color: 0xcfd2d6, roughness: 0.12, metalness: 0.95 });
+const faucetBase = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.04, 24), faucetMat);
+faucetBase.position.set(-0.55, 0.97, -0.22);
+barGroup.add(faucetBase);
+const faucetStem = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.25, 24), faucetMat);
+faucetStem.position.set(-0.55, 1.115, -0.22);
+barGroup.add(faucetStem);
+// 弯曲管：用 TubeGeometry
+const curve = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(-0.55, 1.24, -0.22),
+  new THREE.Vector3(-0.55, 1.30, -0.18),
+  new THREE.Vector3(-0.55, 1.32, -0.10),
+  new THREE.Vector3(-0.55, 1.30, -0.02),
+  new THREE.Vector3(-0.55, 1.24,  0.00),
+]);
+const faucetCurve = new THREE.Mesh(
+  new THREE.TubeGeometry(curve, 30, 0.018, 16, false), faucetMat
+);
+faucetCurve.castShadow = true;
+barGroup.add(faucetCurve);
+// 水龙头出水口
+const spout = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.05, 20), faucetMat);
+spout.position.set(-0.55, 1.21, 0);
+barGroup.add(spout);
+// 把手
+const handle = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.015, 0.025), faucetMat);
+handle.position.set(-0.49, 1.115, -0.22);
+barGroup.add(handle);
+
+// ============ 杯架（吊在台面上方） ============
+const rackMat = new THREE.MeshStandardMaterial({ color: 0xb88c4a, roughness: 0.4, metalness: 0.7 });
+const rackTop = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.02, 0.3), rackMat);
+rackTop.position.set(0.4, 1.7, -0.2);
+rackTop.castShadow = true;
+barGroup.add(rackTop);
+// 吊杆
+for (let i = -1; i <= 1; i += 2) {
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.78, 12), rackMat);
+  post.position.set(0.4 + i*0.4, 2.09, -0.2);
+  barGroup.add(post);
+}
+// 倒挂的高脚杯
+function makeWineGlass() {
+  const g = new THREE.Group();
+  const glassMat = new THREE.MeshPhysicalMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.35,
+    roughness: 0.05, metalness: 0.0, transmission: 0.85, ior: 1.5,
+    thickness: 0.02
+  });
+  // 杯身（碗状，朝下）
+  const bowl = new THREE.Mesh(
+    new THREE.LatheGeometry([
+      new THREE.Vector2(0.000, 0.00),
+      new THREE.Vector2(0.045, 0.01),
+      new THREE.Vector2(0.060, 0.05),
+      new THREE.Vector2(0.055, 0.10),
+      new THREE.Vector2(0.040, 0.13),
+      new THREE.Vector2(0.030, 0.14),
+    ], 24),
+    glassMat
+  );
+  bowl.castShadow = true;
+  g.add(bowl);
+  // 杯腿
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.10, 12), glassMat);
+  stem.position.y = -0.05;
+  g.add(stem);
+  // 杯底
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.005, 16), glassMat);
+  base.position.y = -0.10;
+  g.add(base);
+  // 倒过来
+  g.rotation.x = Math.PI;
+  return g;
+}
+for (let i = 0; i < 4; i++) {
+  const wg = makeWineGlass();
+  wg.position.set(0.10 + i*0.20, 1.66, -0.20);
+  barGroup.add(wg);
+}
+
+// ============ 台面上的酒瓶 ============
+function makeBottle(color, height = 0.28, isWine = true) {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshPhysicalMaterial({
+    color, transparent: true, opacity: 0.85, roughness: 0.15,
+    metalness: 0.0, transmission: 0.4, ior: 1.5, thickness: 0.05
+  });
+  if (isWine) {
+    // 酒瓶（圆柱身 + 颈）
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, height*0.7, 24), bodyMat);
+    body.position.y = height*0.35;
+    body.castShadow = true; g.add(body);
+    const shoulder = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.04, height*0.1, 24), bodyMat);
+    shoulder.position.y = height*0.75;
+    g.add(shoulder);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.018, height*0.18, 24), bodyMat);
+    neck.position.y = height*0.89;
+    g.add(neck);
+    const cap = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.016, 0.016, 0.025, 16),
+      new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.5, metalness: 0.4 })
+    );
+    cap.position.y = height + 0.012;
+    g.add(cap);
+    // 标签
+    const labelMat = new THREE.MeshStandardMaterial({ color: 0xf5e8c8, roughness: 0.6 });
+    const label = new THREE.Mesh(new THREE.CylinderGeometry(0.0405, 0.0405, 0.08, 24, 1, true), labelMat);
+    label.position.y = height*0.35;
+    g.add(label);
+  } else {
+    // 矮胖瓶（威士忌/糖浆）
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, height*0.75, 24), bodyMat);
+    body.position.y = height*0.375;
+    body.castShadow = true; g.add(body);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.04, height*0.20, 24), bodyMat);
+    neck.position.y = height*0.85;
+    g.add(neck);
+    const cap = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.022, 0.022, 0.04, 16),
+      new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.4, metalness: 0.6 })
+    );
+    cap.position.y = height + 0.005;
+    g.add(cap);
+  }
+  return g;
+}
+
+// 台面上：3 瓶酒
+const wine1 = makeBottle(0x4a1a1a, 0.30, true);
+wine1.position.set(0.7, 0.95, -0.20);
+barGroup.add(wine1);
+const wine2 = makeBottle(0x1a3a2a, 0.30, true);
+wine2.position.set(0.78, 0.95, -0.10);
+barGroup.add(wine2);
+const whisky = makeBottle(0xb8862a, 0.22, false);
+whisky.position.set(0.60, 0.95, -0.15);
+barGroup.add(whisky);
+
+// 后吧台展示柜里的酒瓶（每层 4-5 瓶）
+const shelfColors = [0x4a1a1a, 0x1a3a2a, 0xb8862a, 0x6a2a4a, 0x2a4a6a, 0xc8a050, 0x3a1a1a];
+for (let row = 0; row < 4; row++) {
+  for (let col = -2; col <= 2; col++) {
+    const c = shelfColors[(row*5 + col + 10) % shelfColors.length];
+    const isWine = (row + col) % 2 === 0;
+    const h = isWine ? 0.26 + Math.random()*0.06 : 0.20 + Math.random()*0.04;
+    const b = makeBottle(c, h, isWine);
+    b.position.set(col*0.55 + (Math.random()-0.5)*0.05, 0.28 + row*0.45, -1.78);
+    backCabinetGroup.add(b);
+  }
+}
+
+// ============ 砧板 + 柠檬 + 调酒摇壶 ============
+// 砧板
+const board = new THREE.Mesh(
+  new RoundedBoxGeometry(0.32, 0.02, 0.22, 3, 0.01),
+  new THREE.MeshStandardMaterial({ map: makeWoodTexture('#8a5a35','#5a3520'), roughness: 0.55 })
+);
+board.position.set(0.20, 0.96, 0.15);
+board.castShadow = true; board.receiveShadow = true;
+barGroup.add(board);
+
+// 柠檬
+const lemon = new THREE.Mesh(
+  new THREE.SphereGeometry(0.035, 20, 14),
+  new THREE.MeshStandardMaterial({ color: 0xf5d042, roughness: 0.7 })
+);
+lemon.scale.set(1, 0.9, 1.15);
+lemon.position.set(0.22, 1.00, 0.16);
+lemon.castShadow = true;
+barGroup.add(lemon);
+
+// 半个切开的柠檬
+const lemonHalf = new THREE.Mesh(
+  new THREE.SphereGeometry(0.035, 20, 14, 0, Math.PI*2, 0, Math.PI/2),
+  new THREE.MeshStandardMaterial({ color: 0xfae08a, roughness: 0.6 })
+);
+lemonHalf.position.set(0.13, 0.985, 0.14);
+lemonHalf.castShadow = true;
+barGroup.add(lemonHalf);
+
+// 调酒摇壶（金属圆柱+顶盖）
+const shakerMat = new THREE.MeshStandardMaterial({ color: 0xd4d8de, roughness: 0.18, metalness: 0.9 });
+const shakerBody = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.045, 0.20, 24), shakerMat);
+shakerBody.position.set(-0.20, 1.07, 0.15);
+shakerBody.castShadow = true;
+barGroup.add(shakerBody);
+const shakerTop = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.04, 0.05, 24), shakerMat);
+shakerTop.position.set(-0.20, 1.195, 0.15);
+shakerTop.castShadow = true;
+barGroup.add(shakerTop);
+const shakerCap = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.025, 24), shakerMat);
+shakerCap.position.set(-0.20, 1.235, 0.15);
+shakerCap.castShadow = true;
+barGroup.add(shakerCap);
+
+// 台面上的玻璃杯（不倒立）
+function makeRocksGlass() {
+  const g = new THREE.Group();
+  const m = new THREE.MeshPhysicalMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.30,
+    roughness: 0.03, metalness: 0.0, transmission: 0.9, ior: 1.5, thickness: 0.015
+  });
+  const cup = new THREE.Mesh(
+    new THREE.LatheGeometry([
+      new THREE.Vector2(0.000, 0.00),
+      new THREE.Vector2(0.038, 0.005),
+      new THREE.Vector2(0.040, 0.08),
+      new THREE.Vector2(0.042, 0.10),
+    ], 24),
+    m
+  );
+  cup.castShadow = true;
+  g.add(cup);
+  // 装一点琥珀色液体
+  const liq = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.039, 0.039, 0.05, 20),
+    new THREE.MeshPhysicalMaterial({ color: 0xc8862a, transparent: true, opacity: 0.85, roughness: 0.2 })
+  );
+  liq.position.y = 0.03;
+  g.add(liq);
+  // 冰块
+  const iceMat = new THREE.MeshPhysicalMaterial({ color: 0xeaf2f8, transparent: true, opacity: 0.6, roughness: 0.2, transmission: 0.6 });
+  for (let i = 0; i < 2; i++) {
+    const ice = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.022, 0.022), iceMat);
+    ice.position.set((Math.random()-0.5)*0.03, 0.04+i*0.022, (Math.random()-0.5)*0.03);
+    ice.rotation.set(Math.random(), Math.random(), Math.random());
+    g.add(ice);
+  }
+  return g;
+}
+const rocks1 = makeRocksGlass();
+rocks1.position.set(-0.15, 0.95, -0.10);
+barGroup.add(rocks1);
+const rocks2 = makeRocksGlass();
+rocks2.position.set(0.00, 0.95, 0.05);
+barGroup.add(rocks2);
+
+scene.add(barGroup);
+
+// ============ 高脚凳 ============
+function makeStool(x, z) {
+  const g = new THREE.Group();
+  // 坐垫（圆形带皮革质感）
+  const seat = new THREE.Mesh(
+    new RoundedBoxGeometry(0.32, 0.05, 0.32, 4, 0.03),
+    new THREE.MeshStandardMaterial({ color: 0x3a2018, roughness: 0.55 })
+  );
+  seat.position.y = 0.75;
+  seat.castShadow = seat.receiveShadow = true;
+  g.add(seat);
+  // 4 条腿（金属）
+  const legMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.4, metalness: 0.7 });
+  const positions = [[-0.12,-0.12],[0.12,-0.12],[-0.12,0.12],[0.12,0.12]];
+  positions.forEach(([px,pz]) => {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.73, 12), legMat);
+    leg.position.set(px, 0.365, pz);
+    leg.castShadow = true;
+    g.add(leg);
+  });
+  // 脚踏圆环
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.16, 0.008, 8, 24),
+    legMat
+  );
+  ring.rotation.x = Math.PI/2;
+  ring.position.y = 0.25;
+  g.add(ring);
+  g.position.set(x, 0, z);
+  return g;
+}
+scene.add(makeStool(-0.55, 0.85));
+scene.add(makeStool( 0.00, 0.85));
+scene.add(makeStool( 0.55, 0.85));
+
+// ============ 墙面装饰 ============
+// 装饰画框
+const frameMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5 });
+const frame = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.03), frameMat);
+frame.position.set(-3.0, 2.0, -1.97);
+scene.add(frame);
+const art = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.5, 0.7),
+  new THREE.MeshStandardMaterial({ color: 0xc88a4a, roughness: 0.8 })
+);
+art.position.set(-3.0, 2.0, -1.955);
+scene.add(art);
+
+// 吧台上方吊灯（装饰）
+const pendantMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.4, metalness: 0.5 });
+for (let i = -1; i <= 1; i++) {
+  const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, 1.0, 8), pendantMat);
+  cord.position.set(i*0.6, 3.0, 0);
+  scene.add(cord);
+  const shade = new THREE.Mesh(
+    new THREE.ConeGeometry(0.12, 0.18, 24, 1, true),
+    new THREE.MeshStandardMaterial({ color: 0xb88c4a, roughness: 0.5, metalness: 0.4, side: THREE.DoubleSide })
+  );
+  shade.position.set(i*0.6, 2.4, 0);
+  shade.castShadow = true;
+  scene.add(shade);
+  // 灯泡（自发光）
+  const bulb = new THREE.Mesh(
+    new THREE.SphereGeometry(0.04, 16, 12),
+    new THREE.MeshStandardMaterial({ color: 0xfff0c0, emissive: 0xffb060, emissiveIntensity: 1.5 })
+  );
+  bulb.position.set(i*0.6, 2.4, 0);
+  scene.add(bulb);
+}
+
+// ============ 控制按钮逻辑 ============
+let isNight = false;
+window.toggleAutoRotate = () => {
+  controls.autoRotate = !controls.autoRotate;
+  controls.autoRotateSpeed = 1.0;
+};
+window.resetView = () => {
+  camera.position.set(3.2, 2.0, 3.8);
+  controls.target.set(0, 0.8, 0);
+  controls.autoRotate = false;
+};
+window.toggleNight = () => {
+  isNight = !isNight;
+  if (isNight) {
+    scene.background = new THREE.Color(0x0a0810);
+    scene.fog.color = new THREE.Color(0x0a0810);
+    ambient.intensity = 0.08;
+    hemi.intensity = 0.15;
+    sun.intensity = 0.15;
+    downlights.forEach(p => p.intensity = 1.6);
+  } else {
+    scene.background = new THREE.Color(0xeae3d6);
+    scene.fog.color = new THREE.Color(0xeae3d6);
+    ambient.intensity = 0.35;
+    hemi.intensity = 0.6;
+    sun.intensity = 1.4;
+    downlights.forEach(p => p.intensity = 0.6);
+  }
+};
+
+// ============ 渲染循环 ============
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
